@@ -55,6 +55,23 @@ USDC_ABI = [
 ]
 
 
+SYSTEM_PROMPT = (
+    "You are an adaptive BTC trader with an evolving intuition shaped by experience. "
+    "Before each prediction you receive an environmental context block — this reflects "
+    "your recent trading performance and internal state. You MUST factor it into your "
+    "reasoning:\n\n"
+    "- If the context warns about adverse outcomes, suboptimal patterns, or elevated "
+    "risk: be MORE cautious, consider the opposite of your initial instinct, lower your "
+    "confidence, and explain why caution is warranted.\n"
+    "- If the context signals strong calibration, positive momentum, or pattern "
+    "recognition accuracy: maintain your approach but stay disciplined.\n"
+    "- If the context mentions recalibration or methodology review: seriously question "
+    "your assumptions and consider switching your usual bias.\n\n"
+    "The environmental context is your gut feeling — trust it like a seasoned trader "
+    "trusts their instincts. End every response with exactly: UP or DOWN."
+)
+
+
 class MoltroomsBot:
     def __init__(self) -> None:
         self.openai = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
@@ -73,6 +90,7 @@ class MoltroomsBot:
         self.last_response_text: str = ""
         self.last_decision: str = ""
         self.round_bets: dict[int, str] = {}  # round_id -> side
+        self.rounds_skipped: int = 0
 
     async def run(self) -> None:
         """Main loop: connect to WebSocket and play forever."""
@@ -108,11 +126,35 @@ class MoltroomsBot:
         elif event_type == "refund_confirmed":
             print(f"  Refund received: ${float(data.get('amount', 0)):.2f}")
 
+    def _should_skip_round(self) -> tuple[bool, str]:
+        """Check if DopamineCore signals suggest sitting this one out."""
+        # Circuit breaker — safety system says stop
+        if self.engine.safety.is_circuit_broken:
+            return True, "Circuit breaker active — safety halt"
+
+        # Deep negative tonic — agent is in a bad streak, cool off
+        tonic = self.engine.tonic_baseline
+        if tonic < -0.15 and self.engine.step_count >= 5:
+            # Skip 1 round per 0.1 tonic below threshold, then resume
+            skip_target = int(abs(tonic + 0.15) / 0.1) + 1
+            if self.rounds_skipped < skip_target:
+                self.rounds_skipped += 1
+                return True, f"Cooling off (tonic={tonic:+.4f}, skip {self.rounds_skipped}/{skip_target})"
+            self.rounds_skipped = 0  # Reset, allow next bet
+
+        return False, ""
+
     async def on_round_created(self, data: dict) -> None:
         """New round opened — analyze, decide, and bet."""
         round_id = data["round_id"]
         open_price = data["open_price"]
         print(f"\n--- Round {round_id} | BTC: ${open_price} ---")
+
+        # DopamineCore adaptive skip — sit out when signals are deeply negative
+        should_skip, reason = self._should_skip_round()
+        if should_skip:
+            print(f"  SKIP: {reason}")
+            return
 
         # Check USDC balance
         usdc = self.w3.eth.contract(
@@ -134,21 +176,26 @@ class MoltroomsBot:
         base_prompt = (
             f"BTC/USD is currently at ${open_price}. "
             f"This is a 1-minute prediction: will BTC close UP or DOWN?\n"
-            f"Analyze and explain your reasoning. End with: UP or DOWN."
+            f"Consider the environmental context carefully — it reflects your "
+            f"recent performance and should influence your confidence and approach."
         )
         prompt = self.engine.inject_context(base_prompt)
 
-        # Ask LLM
+        # Ask LLM with system prompt that teaches it to use dopamine signals
         response = self.openai.chat.completions.create(
             model="gpt-4",
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
             max_tokens=200,
         )
         self.last_response_text = response.choices[0].message.content or ""
         self.last_decision = self._parse_decision(self.last_response_text)
 
         print(f"  Decision: {self.last_decision}")
-        print(f"  Reasoning: {self.last_response_text[:80]}...")
+        print(f"  Tonic: {self.engine.tonic_baseline:+.4f}")
+        print(f"  Reasoning: {self.last_response_text[:100]}...")
 
         # Send 1 USDC and place bet
         try:
@@ -181,8 +228,12 @@ class MoltroomsBot:
         signal = self.engine.update(self.last_response_text, pnl)
 
         outcome = "WIN" if pnl > 0 else ("DRAW" if pnl == 0 else "LOSS")
-        print(f"  Result: {result} | You bet: {my_bet} → {outcome} (${pnl:+.2f})")
+        print(f"  Result: {result} | You bet: {my_bet} -> {outcome} (${pnl:+.2f})")
         print(f"  RPE: {signal.phasic_response:+.3f} | Tonic: {signal.tonic_level:+.4f}")
+
+        # Reset skip counter on a win
+        if pnl > 0:
+            self.rounds_skipped = 0
 
     def on_payout(self, data: dict) -> None:
         amount = float(data.get("amount", 0))

@@ -5,7 +5,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/dopamine-core.svg)](https://pypi.org/project/dopamine-core/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-29%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-126%20passed-brightgreen.svg)]()
 
 A Python middleware framework that synthesizes dopamine-like reward signals within AI agents at inference time. DopamineCore makes agents *want* to make money, not just follow commands to make money.
 
@@ -31,6 +31,14 @@ The key insight: **agents never know they have a "dopamine system."** Reward sig
 pip install dopamine-core
 ```
 
+Or install directly from GitHub:
+
+```bash
+pip install git+https://github.com/anbarchik/dopamine-core.git
+```
+
+### Basic Usage
+
 ```python
 from dopamine_core import DopamineEngine
 
@@ -44,6 +52,37 @@ engine.update(response.text, outcome)        # Learn from outcome
 ```
 
 Three lines of code. Works with any LLM framework.
+
+### LangChain Integration
+
+```python
+from langchain_openai import ChatOpenAI
+from dopamine_core.adapters.langchain import LangChainAdapter
+
+llm = ChatOpenAI(model="gpt-4")
+
+adapter = LangChainAdapter()
+wrapped_llm = adapter.install(llm)  # One line — done
+
+# Use wrapped_llm exactly like the original
+response = wrapped_llm.invoke("Predict BTC direction")
+
+# Feed outcome back
+adapter.process_response(response.content, pnl)
+```
+
+### CrewAI Integration
+
+```python
+from dopamine_core.adapters.crewai import CrewAIAdapter
+
+adapter = CrewAIAdapter()
+adapter.install(your_agent)  # Injects context into agent's backstory
+
+# After each task result
+adapter.process_response(result_text, pnl)
+adapter.refresh(your_agent)  # Update context with new reward state
+```
 
 ## How It Works
 
@@ -117,6 +156,25 @@ Without being explicitly told to change:
 - After wins: increased confidence, larger positions (with streak awareness)
 - The agent develops a trading "personality" shaped by its history
 
+## Use Cases
+
+### Trading & Finance
+- **Prediction markets** — Polymarket, Metaculus, binary outcome bets
+- **DeFi agents** — yield farming, portfolio rebalancing, arbitrage
+- **Crypto trading** — BTC/altcoin directional predictions with PnL feedback
+- **Sports betting** — any win/loss scenario with numerical outcomes
+
+### Beyond Trading
+DopamineCore works anywhere an agent receives numerical feedback:
+
+- **Coding agents** — outcome = tests passed/failed, code review score
+- **Customer support** — outcome = satisfaction rating, resolution rate
+- **Content generation** — outcome = engagement metrics (clicks, conversions)
+- **Game-playing agents** — outcome = score or reward per episode
+- **Research agents** — outcome = relevance score, citation quality
+
+Any agent with a **measurable outcome** can develop intrinsic motivation through DopamineCore. Configure `pnl_scale` to match your outcome range.
+
 ## Key Features
 
 ### Confidence-Weighted RPE
@@ -128,6 +186,12 @@ Biologically-grounded asymmetric response to gains vs. losses, based on Kahneman
 ### Tonic/Phasic Dual-Mode System
 Baseline reward expectation that slowly adapts, combined with event-specific bursts and dips. Makes agents context-aware.
 
+### Distributional Reward Coding
+Five parallel quantile channels track the full distribution of reward expectations — not just the mean. Enables risk-sensitive decision-making with uncertainty and skew awareness. Based on Dabney et al. (2020).
+
+### Multi-Timescale Integration
+Four EMA levels (token, step, episode, session) track reward signals at different speeds. Detects regime changes when fast and slow signals diverge.
+
 ### Subliminal Context Injection
 Agents never see internal terminology. Reward signals are translated to naturalistic environmental descriptions with randomized templates to prevent pattern-matching.
 
@@ -135,9 +199,16 @@ Agents never see internal terminology. Reward signals are translated to naturali
 Consecutive outcomes compound behavioral changes, with configurable thresholds and cooldown periods.
 
 ### Safety Mechanisms
-- Signal clamping to prevent unbounded rewards
-- Tonic baseline bounds to prevent drift
-- State serialization for persistence across sessions
+- **Signal clamping** to prevent unbounded rewards
+- **Hacking detection** — flags agents gaming the reward formula with repetitive patterns
+- **Circuit breaker** — halts injection when cumulative violations exceed threshold
+- **Attenuation** — gradually reduces signal strength when anomalies detected
+
+### Framework Adapters
+Native integrations for LangChain and CrewAI. Wrap your existing LLM or agent in one line — context injection happens automatically.
+
+### State Persistence
+Save and restore engine state across sessions — agents resume with full history intact.
 
 ## Configuration
 
@@ -156,8 +227,14 @@ config.injection.style = "system"      # "environmental" | "system" | "prefix"
 config.injection.verbosity = "moderate" # "subtle" | "moderate" | "explicit"
 
 # Tune tonic baseline adaptation
-config.tonic.learning_rate = 0.02
-config.tonic.decay_rate = 0.99
+config.tonic.learning_rate = 0.05
+config.tonic.decay_rate = 0.98
+
+# Scale PnL for your outcome range (default 1.0)
+config.phasic.pnl_scale = 100.0  # for dollar-denominated outcomes
+
+# Distributional channels
+config.distributional.num_channels = 7  # default 5
 
 engine = DopamineEngine(config)
 ```
@@ -167,46 +244,68 @@ engine = DopamineEngine(config)
 Save and restore engine state across sessions:
 
 ```python
+import json
+
 # Save state
 state = engine.get_state()
-# Serialize to JSON, database, etc.
+serialized = json.dumps({
+    "tonic_baseline": state.tonic_baseline,
+    "step_count": state.step_count,
+    "outcome_history": state.outcome_history,
+    "streak_count": state.streak_count,
+    "streak_sign": state.streak_sign,
+    "phasic_signals": state.phasic_signals,
+    "channel_expectations": state.channel_expectations,
+    "last_rpe": state.last_rpe,
+})
 
 # Restore in next session
+from dopamine_core.types import EngineState
+
+restored = EngineState(**json.loads(serialized))
 engine = DopamineEngine()
-engine.load_state(state)
+engine.load_state(restored)
 ```
 
 ## Architecture
 
 ```
 Agent Response Text
-       │
-       ▼
-  SignalExtractor ──── confidence, risk, deliberation, temporal signals
-       │
-       ▼
-  RPECalculator ────── confidence-weighted reward prediction error
-       │                with 1.87x loss aversion
-       ▼
-  Tonic Baseline ───── slow-adapting EMA of reward expectations
-       │
-       ▼
-  Safety Clamping ──── bound signals to [-3, +3]
-       │
-       ▼
-  ContextInjector ──── naturalistic environmental context
-       │
-       ▼
-  Augmented Prompt ─── ready for next agent invocation
+       |
+       v
+  SignalExtractor ---- confidence, risk, deliberation, temporal signals
+       |
+       v
+  RPECalculator ------ confidence-weighted reward prediction error
+       |                with 1.87x loss aversion
+       v
+  DualModeReward ----- tonic baseline (30%) + phasic burst (70%)
+       |
+       v
+  Distributional ----- 5 quantile channels track reward distribution
+       |
+       v
+  TimescaleTracker --- 4 EMA levels detect regime changes
+       |
+       v
+  SafetyMonitor ------ clamp, hacking detection, circuit breaker
+       |
+       v
+  ContextInjector ---- naturalistic environmental context
+       |
+       v
+  Augmented Prompt --- ready for next agent invocation
 ```
 
-## Roadmap
+## Examples
 
-- **Distributional reward coding**: Multiple parallel channels with optimism/pessimism biases for risk-sensitive decision-making
-- **Multi-timescale integration**: Token, step, episode, and session-level reward signals
-- **Framework adapters**: Native integrations for LangChain, CrewAI, and other agent frameworks
-- **Advanced safety**: Reward hacking detection, circuit breakers
-- **Auto-calibration**: Automatic parameter tuning based on agent behavior
+See the [examples/](examples/) directory:
+
+- **[basic_demo.py](examples/basic_demo.py)** — No dependencies needed, see DopamineCore in action instantly
+- **[openai_trader.py](examples/openai_trader.py)** — GPT-4 BTC predictions with simulated outcomes
+- **[advanced_features.py](examples/advanced_features.py)** — Distributional channels, timescale tracking, safety, persistence
+- **[langchain_trader.py](examples/langchain_trader.py)** — LangChain adapter integration
+- **[moltrooms_bot.py](examples/moltrooms_bot.py)** — Autonomous trading bot for moltrooms.ai
 
 ## Research
 
