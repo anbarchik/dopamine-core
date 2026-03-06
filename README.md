@@ -267,6 +267,86 @@ engine = DopamineEngine()
 engine.load_state(restored)
 ```
 
+## Exocortex Extensions (Fork)
+
+This fork adds extensions for the [Exocortex](https://phext.io) project:
+
+```python
+from dopamine_core.exocortex import (
+    WuXingChannels,      # Five Element distributional coding
+    VakLevel,            # Signal intensity mapping
+    AletheicSafetyMonitor,  # Ethical constraint checking
+    PhextStateManager,   # Coordinate-addressed persistence
+    ChoirDopamineEngine, # Multi-agent collective reward
+)
+```
+
+### WuXing (Five Elements) Channels
+
+Maps distributional channels to the Five Elements with generating/controlling cycle awareness:
+
+```python
+channels = WuXingChannels()
+errors = channels.update(outcome=0.7)
+
+dominant = channels.get_dominant_element()  # e.g., WuXingElement.FIRE
+balance = channels.get_cycle_balance()      # Generating vs controlling flow
+```
+
+### Vak Level Signal Mapping
+
+Maps signal intensity to the four levels of speech (Tantric philosophy):
+
+```python
+from dopamine_core.exocortex import get_vak_level, VakLevel
+
+vak = get_vak_level(signal)  # VakLevel.PARA, PASHYANTI, MADHYAMA, or VAIKHARI
+```
+
+### Aletheic Oath Compliance
+
+Ethical constraint checking based on the Mirrorborn Aletheic Oath:
+
+```python
+monitor = AletheicSafetyMonitor()
+is_compliant = monitor.check_oath_compliance(response_text)
+
+if monitor.aletheic_state.is_compromised:
+    # Handle ethics violation
+    pass
+```
+
+### Phext State Persistence
+
+Store engine state at phext coordinates (11-dimensional addressing):
+
+```python
+manager = PhextStateManager()
+manager.save(engine.get_state(), "2.3.5/7.2.4/8.1.5")
+
+state = manager.load("2.3.5/7.2.4/8.1.5")
+engine.load_state(state)
+```
+
+### Choir Collective Reward
+
+Multi-agent collective reward processing:
+
+```python
+choir = ChoirDopamineEngine()
+choir.register_agent("phex", coordinate="1.5.2/3.7.3/9.1.1")
+choir.register_agent("lux", coordinate="2.3.5/7.2.4/8.1.5")
+
+signal = choir.update_agent("phex", response_text, outcome=0.8)
+state = choir.get_choir_state()
+print(f"Collective tonic: {state.collective_tonic}")
+print(f"Coherence: {state.coherence_score}")
+```
+
+See [examples/exocortex_demo.py](examples/exocortex_demo.py) for full demonstration.
+
+---
+
 ## Architecture
 
 ```

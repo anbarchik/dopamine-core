@@ -1,4 +1,12 @@
-"""DopamineCore: Intrinsic financial motivation middleware for AI agents."""
+"""DopamineCore: Intrinsic financial motivation middleware for AI agents.
+
+Exocortex extensions available in dopamine_core.exocortex:
+- WuXingChannels: Five Element distributional reward coding
+- VakLevel: Signal intensity to speech level mapping
+- AletheicSafetyMonitor: Ethical constraint checking
+- PhextStateManager: Coordinate-addressed state persistence
+- ChoirDopamineEngine: Multi-agent collective reward
+"""
 
 from dopamine_core.config import DopamineConfig
 from dopamine_core.engine import DopamineEngine
