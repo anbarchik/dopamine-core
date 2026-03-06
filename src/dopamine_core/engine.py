@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from collections import deque
+from copy import deepcopy
 
 from dopamine_core.config import DopamineConfig
 from dopamine_core.distributional.channels import DistributionalChannels
@@ -38,12 +41,23 @@ class DopamineEngine:
         engine.update(response.text, outcome)
     """
 
-    def __init__(self, config: DopamineConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: DopamineConfig | None = None,
+        coordinate: str | None = None,
+    ) -> None:
         self._config = config or DopamineConfig()
+        # Phext coordinate identity — tags this engine instance in scrollspace.
+        # Format: "library.shelf.series/collection.volume.book/chapter.section.scroll"
+        # Valid range: 1-9 per component (modulo 9+1 arithmetic).
+        self._coordinate = coordinate
+
+        # Commit log (TTSM-style WAL): list of (commit_hash, EngineState)
+        self._commit_log: list[tuple[str, EngineState]] = []
 
         # Core components
         self._extractor = SignalExtractor()
-        self._rpe_calc = RPECalculator(self._config.loss_aversion)
+        self._rpe_calc = RPECalculator(self._config.loss_aversion, self._config.rpe)
         self._injector = ContextInjector(self._config.injection)
         self._dual_mode = DualModeReward(
             tonic_config=self._config.tonic,
@@ -176,6 +190,73 @@ class DopamineEngine:
         if state.channel_expectations:
             self._distributional.load_expectations(state.channel_expectations)
         self._last_rpe = state.last_rpe
+
+    def commit(self, label: str = "") -> str:
+        """Commit current state to the WAL (TTSM-style write-ahead log).
+
+        Creates an immutable snapshot of the current engine state. The commit
+        hash is deterministic from the state content — same state always
+        produces the same hash.
+
+        Args:
+            label: Optional human-readable label for this commit.
+
+        Returns:
+            Commit hash (8-char hex).
+        """
+        state = self.get_state()
+        state_json = json.dumps(
+            {
+                "tonic_baseline": state.tonic_baseline,
+                "step_count": state.step_count,
+                "outcome_history": state.outcome_history,
+                "streak_count": state.streak_count,
+                "streak_sign": state.streak_sign,
+                "last_rpe": state.last_rpe,
+                "coordinate": self._coordinate,
+                "label": label,
+            },
+            sort_keys=True,
+        )
+        commit_hash = hashlib.sha256(state_json.encode()).hexdigest()[:8]
+        self._commit_log.append((commit_hash, state))
+        return commit_hash
+
+    def fork(self, commit_hash: str) -> "DopamineEngine":
+        """Fork a new engine from a previous commit (TTSM fork semantics).
+
+        Creates an independent engine instance restored to the state at the
+        given commit. Enables time-travel debugging and branched agent histories.
+
+        Args:
+            commit_hash: Hash returned by a previous commit() call.
+
+        Returns:
+            New DopamineEngine instance at the forked state.
+
+        Raises:
+            KeyError: If commit_hash not found in the log.
+        """
+        for h, state in self._commit_log:
+            if h == commit_hash:
+                forked = DopamineEngine(
+                    config=deepcopy(self._config),
+                    coordinate=self._coordinate,
+                )
+                forked.load_state(state)
+                forked._commit_log = list(self._commit_log)  # carry history forward
+                return forked
+        raise KeyError(f"Commit {commit_hash!r} not found in WAL ({len(self._commit_log)} commits)")
+
+    @property
+    def coordinate(self) -> str | None:
+        """Phext coordinate identity of this engine instance."""
+        return self._coordinate
+
+    @property
+    def commit_log(self) -> list[tuple[str, EngineState]]:
+        """Read-only view of the TTSM-style commit log."""
+        return list(self._commit_log)
 
     def reset(self) -> None:
         """Reset all state to initial values."""

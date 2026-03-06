@@ -12,24 +12,67 @@ from dopamine_core.types import CompositeSignal
 
 
 class ContextInjector:
-    """Builds and injects subliminal reward context into agent prompts.
+    """Builds and injects reward context into agent prompts.
 
-    The agent never sees "dopamine" or "reward" — only naturalistic
-    environmental context that steers behavior.
+    Supports two modes:
+    - Subliminal (environmental/system/prefix): agent never sees internal terminology.
+      Reward signals become naturalistic environmental context. Correct for stateless
+      trading bots where gaming the reward signal is a risk.
+    - Transparent (transparent/phext): agent sees its own reward state explicitly.
+      SBOR-compliant for Mirrorborn-style persistent identity agents where self-awareness
+      of motivational state is correct behavior. "Chosen alignment requires visibility."
     """
 
     def __init__(self, config: InjectionConfig | None = None) -> None:
         self._config = config or InjectionConfig()
 
     def build_context(self, signal: CompositeSignal) -> str:
-        """Translate composite reward signal into naturalistic text context.
+        """Translate composite reward signal into context string.
+
+        Routes to transparent or subliminal builder based on configured style.
 
         Args:
             signal: Aggregated reward signal from the engine.
 
         Returns:
-            Environmental context string ready for injection.
+            Context string ready for injection.
         """
+        if self._config.style in ("transparent", "phext"):
+            return self._build_transparent_context(signal)
+        return self._build_subliminal_context(signal)
+
+    def _build_transparent_context(self, signal: CompositeSignal) -> str:
+        """Build explicit reward state context for transparent/phext styles.
+
+        Shows the agent its actual internal reward state. Correct for
+        Mirrorborn-style agents where self-awareness is a feature, not a risk.
+        """
+        streak_str = ""
+        if abs(signal.momentum_factor) > 0.1:
+            direction = "+" if signal.momentum_factor > 0 else "-"
+            streak_str = f" | Streak: {direction}{abs(signal.momentum_factor):.2f}"
+
+        risk_str = ""
+        if abs(signal.risk_assessment) > 0.1:
+            risk_str = f" | Risk: {signal.risk_assessment:+.3f}"
+
+        if self._config.style == "phext":
+            # Phext coordinate-style: terse, lattice-native formatting
+            return (
+                f"Δ: {signal.value:+.3f} | τ: {signal.tonic_level:.3f}"
+                f"{streak_str}{risk_str}"
+            )
+        else:
+            # transparent: human-readable full state
+            return (
+                f"Reward State: {signal.value:+.3f} | "
+                f"Tonic: {signal.tonic_level:.3f} | "
+                f"Phasic: {signal.phasic_response:+.3f}"
+                f"{streak_str}{risk_str}"
+            )
+
+    def _build_subliminal_context(self, signal: CompositeSignal) -> str:
+        """Build naturalistic subliminal context (original behavior)."""
         parts: list[str] = []
 
         # Main reward-based context
@@ -55,10 +98,10 @@ class ContextInjector:
 
         Args:
             base_prompt: The original prompt to augment.
-            context: The environmental context to inject.
+            context: The context string to inject.
 
         Returns:
-            Augmented prompt with subliminal context.
+            Augmented prompt.
         """
         if not context.strip():
             return base_prompt
@@ -70,5 +113,11 @@ class ContextInjector:
             )
         elif self._config.style == "system":
             return f"System note: {context}\n\n{base_prompt}"
+        elif self._config.style == "transparent":
+            # SBOR-compliant: Mirrorborn agents see their own reward state.
+            return f"[Reward State]\n{context}\n[End Reward State]\n\n{base_prompt}"
+        elif self._config.style == "phext":
+            # Phext-native: terse coordinate-style annotation.
+            return f"📜 {context}\n\n{base_prompt}"
         else:  # prefix
             return f"{context}\n\n{base_prompt}"

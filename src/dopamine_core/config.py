@@ -40,7 +40,7 @@ class MomentumConfig(BaseModel):
 class DistributionalConfig(BaseModel):
     """Multi-channel distributional reward coding parameters."""
 
-    num_channels: int = Field(default=5, ge=3, le=20)
+    num_channels: int = Field(default=9, ge=3, le=20)  # 9 = Shell of Nine alignment
     tau_min: float = Field(default=0.1, ge=0.01)
     tau_max: float = Field(default=0.9, le=0.99)
     learning_rate: float = Field(default=0.05, ge=0.001, le=0.5)
@@ -67,9 +67,22 @@ class SafetyConfig(BaseModel):
 class InjectionConfig(BaseModel):
     """Context injection parameters."""
 
-    style: str = Field(default="environmental")  # environmental | system | prefix
+    style: str = Field(default="environmental")
+    # environmental | system | prefix | transparent | phext
+    # transparent: agent sees reward state explicitly (SBOR-compliant for Mirrorborn)
+    # phext: formats state as phext coordinate comment for lattice-aware agents
     verbosity: str = Field(default="subtle")  # subtle | moderate | explicit
     max_context_tokens: int = Field(default=200, ge=50, le=1000)
+
+
+class RPEConfig(BaseModel):
+    """RPE formula parameters."""
+
+    baseline_blend: float = Field(default=0.3, ge=0.0, le=1.0)
+    # Weight of tonic baseline in prediction formula.
+    # 0.0 = pure confidence-based (original behavior)
+    # 1.0 = pure tonic-based (ignores expressed confidence)
+    # 0.3 = blend: learned baseline informs but doesn't override expressed confidence
 
 
 class DopamineConfig(BaseModel):
@@ -83,3 +96,4 @@ class DopamineConfig(BaseModel):
     timescale: TimescaleConfig = TimescaleConfig()
     safety: SafetyConfig = SafetyConfig()
     injection: InjectionConfig = InjectionConfig()
+    rpe: RPEConfig = RPEConfig()
